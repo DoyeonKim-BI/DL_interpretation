@@ -19,7 +19,6 @@ def get_gradients(inputs, model):
     Returns:
         Gradients of the predictions w.r.t input
     """
-    
     if isinstance(inputs, dict): #structured input
         inputs = {key: tf.cast(inputs[key], tf.float32) for key in inputs}
     else:
@@ -31,26 +30,42 @@ def get_gradients(inputs, model):
     grads = tape.gradient(preds, inputs)
     return grads # same structure as inputs
 
-## TODO: Saliency map (Simonyan et al., https://arxiv.org/pdf/1312.6034.pdf)
+## Saliency map (Simonyan et al., https://arxiv.org/pdf/1312.6034.pdf)
+def get_saliency_map(inputs, model):
+    """Computes max(|gradients|, channelwise) of outputs w.r.t input, as Simonyan et al.
+    Args:
+        inputs: np.array(tensor of (1,*img)) or dictionary of array (structured input)
+        model:  my model
+    Returns:
+        Saliency map of the predictions w.r.t input
+    """
+    grads        = get_gradients(inputs,model)
+    saliency_map = np.max(np.abs(grads), axis = -1)
+    return saliency_map
 
 ## Grad*Input (Baehrens et al., https://jmlr.org/papers/volume11/baehrens10a/baehrens10a.pdf)
-def get_grad_input(inputs, model):
+def get_grad_input(inputs, model, squeeze_chdim = True):
     """
     Args:
         inputs: np.array(tensor of (1,*img)) or dictionary of array (structured input)
         model:  my model
     Returns:
-        Grad*Input
+        Grad*Input (default: channel-wise sum up)
     """
     grads = get_gradients(inputs,model)
     if isinstance(inputs, dict): #structured input
         grad_input = {grads[key]*inputs[key] for key in inputs.keys()}
+        if squeeze_chdim:
+            grad_input = {key: np.sum(g_i, axis=-1) for key, g_i in grad_input.items()}
     else:
         grad_input = grads * inputs
+        if squeeze_chdim:
+            grad_input = np.sum(grad_input, axis=-1)
+            
     return grad_input
 
 ## Integrated gradients (Sundatatajan et al., http://proceedings.mlr.press/v70/sundararajan17a/sundararajan17a.pdf)
-def get_integrated_gradients(inputs, model, baseline=None, num_steps=50):
+def get_integrated_gradients(inputs, model, baseline=None, num_steps=50, squeeze_chdim = True):
     """Computes Integrated Gradients for a predicted label.
     Args:
         inputs: np.array(tensor of (1,*img)) or dictionary of array (structured input)
@@ -63,6 +78,7 @@ def get_integrated_gradients(inputs, model, baseline=None, num_steps=50):
 
     Returns:
         Integrated gradients w.r.t inputs
+        (default: channel-wise sum up of IG values)
     """
     # If baseline is not provided, start with a black image (all-zeros)
     # having same size as the input image.
@@ -95,6 +111,9 @@ def get_integrated_gradients(inputs, model, baseline=None, num_steps=50):
 
         # 4. Calculate integrated gradients.
         integrated_grads = {key:(img-baseline[key])*avg_grads[key] for key,img in inputs.items()}
+        
+        if squeeze_chdim:
+            integrated_grads = {key: np.sum(ig, axis=-1) for key, ig in integrated_grads.items()}
 
     else:
         inputs = inputs.astype(np.float32)
@@ -121,11 +140,22 @@ def get_integrated_gradients(inputs, model, baseline=None, num_steps=50):
 
         # 4. Calculate integrated gradients.
         integrated_grads = (img_input - baseline) * avg_grads
+        
+        if squeeze_chdim:
+            integrated_grads = np.sum(integrated_grads, axis=-1)
     
     return integrated_grads
 
-## Modified https://jacobgil.github.io/deeplearning/class-activation-maps
-## Enabled regression output interpretation
+####################################################################################
+## CAM and Grad-CAM                                                               ##
+## Modified following codes:                                                      ##
+##     https://jacobgil.github.io/deeplearning/class-activation-maps              ##
+##     https://keras.io/examples/vision/grad_cam/                                 ##
+## Enabled regression output interpretation                                       ##
+## Enabled structured inputs for Grad-CAM                                         ##
+####################################################################################
+
+## CAM (Class activation map; Zhou et al., https://openaccess.thecvf.com/content_cvpr_2016/papers/Zhou_Learning_Deep_Features_CVPR_2016_paper.pdf)
 def get_cam(inputs, model, final_conv_layer_name='', output_layer_name = '',
             pred_index=None, apply_clip = "no"):
     """
@@ -163,9 +193,7 @@ def get_cam(inputs, model, final_conv_layer_name='', output_layer_name = '',
         cam = np.clip(cam, a_min=0,    a_max=None)
     return cam
 
-## Grad-CAM (Gradient-weighted Class Activation Map)
-## Modified fchollet code (https://keras.io/examples/vision/grad_cam/),
-## Enabled structured input, and enabled regression output interpretation
+## Grad-CAM (Gradient-weighted Class Activation Map; Selvaraju et al., https://arxiv.org/pdf/1610.02391.pdf)
 def get_grad_cam(inputs, model, activation_layer_name='',output_layer_name='', pred_index=None,
                  key_list = [], apply_clip = "no"):
     """
@@ -219,5 +247,8 @@ def get_grad_cam(inputs, model, activation_layer_name='',output_layer_name='', p
         
     return grad_cam #same shape as activation layer output
 
+
 ## TODO: layerwise relevance propagation
+## TODO: guided backprop
 ## TODO: smoothgrad
+## TODO: add notebook for running example

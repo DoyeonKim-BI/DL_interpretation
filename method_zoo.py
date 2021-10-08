@@ -31,7 +31,7 @@ def get_gradients(inputs, model):
     return grads # same structure as inputs
 
 ## Saliency map (Simonyan et al., https://arxiv.org/pdf/1312.6034.pdf)
-def get_saliency_map(inputs, model):
+def get_saliency_map(inputs, model, squeeze_chdim = True, feat_keys = None):
     """Computes max(|gradients|, channelwise) of outputs w.r.t input, as Simonyan et al.
     Args:
         inputs: np.array(tensor of (1,*img)) or dictionary of array (structured input)
@@ -40,11 +40,20 @@ def get_saliency_map(inputs, model):
         Saliency map of the predictions w.r.t input
     """
     grads        = get_gradients(inputs,model)
-    saliency_map = np.max(np.abs(grads), axis = -1)
+    if isinstance(grads, dict):
+        if feat_keys is None:
+            feat_keys = grads.keys()
+        saliency_map  = {key:np.abs(grads[key]) for key in feat_keys}
+        if squeeze_chdim:
+            saliency_map = {key:np.max(saliency, axis = -1) for key,saliency in saliency_map.items()}
+    else:
+        saliency_map = np.abs(grads)
+        if squeeze_chdim:
+            saliency_map = np.max(saliency_map, axis = -1)
     return saliency_map
 
 ## Grad*Input (Baehrens et al., https://jmlr.org/papers/volume11/baehrens10a/baehrens10a.pdf)
-def get_grad_input(inputs, model, squeeze_chdim = True):
+def get_grad_input(inputs, model, squeeze_chdim = True, feat_keys = None):
     """
     Args:
         inputs: np.array(tensor of (1,*img)) or dictionary of array (structured input)
@@ -54,7 +63,9 @@ def get_grad_input(inputs, model, squeeze_chdim = True):
     """
     grads = get_gradients(inputs,model)
     if isinstance(inputs, dict): #structured input
-        grad_input = {grads[key]*inputs[key] for key in inputs.keys()}
+        if feat_keys is None:
+            feat_keys = grads.keys()
+        grad_input = {key: grads[key]*inputs[key] for key in feat_keys}
         if squeeze_chdim:
             grad_input = {key: np.sum(g_i, axis=-1) for key, g_i in grad_input.items()}
     else:

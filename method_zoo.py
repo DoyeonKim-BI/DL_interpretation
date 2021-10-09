@@ -76,12 +76,15 @@ def get_grad_input(inputs, model, squeeze_chdim = True, feat_keys = None):
     return grad_input
 
 ## Integrated gradients (Sundatatajan et al., http://proceedings.mlr.press/v70/sundararajan17a/sundararajan17a.pdf)
-def get_integrated_gradients(inputs, model, baseline=None, num_steps=50, squeeze_chdim = True):
+def get_integrated_gradients(inputs, model, baseline=None, num_steps=50, squeeze_chdim = True, feat_keys = None):
     """Computes Integrated Gradients for a predicted label.
     Args:
         inputs: np.array(tensor of (1,*img)) or dictionary of array (structured input)
         model:  my model 
-        baseline (same format as inputs): The baseline image to start with for interpolation
+        baseline:
+            None                  - zero baseline
+            Same format as inputs - The baseline image to start with for interpolation
+            List of baselines     - average IG for the baselines (usually random)
         num_steps: Number of interpolation steps between the baseline
             and the input used in the computation of integrated gradients. These
             steps along determine the integral approximation error. By default,
@@ -94,11 +97,25 @@ def get_integrated_gradients(inputs, model, baseline=None, num_steps=50, squeeze
     # If baseline is not provided, start with a black image (all-zeros)
     # having same size as the input image.
     if isinstance(inputs, dict): #structured input
-        inputs = {key: inputs[key].astype(np.float32) for key in inputs}
+        if feat_keys is None:
+            feat_keys = inputs.keys()
+        inputs = {key: inputs[key].astype(np.float32) for key in feat_keys}
         if baseline is None:
-            baseline = {key: np.zeros(inputs[key].shape[1:]).astype(np.float32) for key in inputs}
+            baseline = {key: np.zeros(inputs[key].shape[1:]).astype(np.float32) for key in feat_keys}
+        elif isinstance(baseline, dict):
+            baseline = {key: baseline[key].astype(np.float32) for key in feat_keys}
+        elif isinstance(baseline, list): #given input: list of random baselines
+            merged_ig = []
+            for random_bl in baseline:
+                ig = get_integrated_gradients(inputs, model, baseline=random_bl, num_steps=num_steps, 
+                                              squeeze_chdim = squeeze_chdim, feat_keys = feat_keys)
+                merged_ig.append(ig)
+            merged_ig = {key: np.mean(np.stack([ig[key] for ig in merged_ig]), axis=0) for key in feat_keys}
+            
+            return merged_ig
         else:
-            baseline = {key: baseline[key].astype(np.float32) for key in baseline}
+            print('Wrong baseline input!\nAvailable: None, baseline, or list of (random) baselines')
+            return None
         
         # 1. Do interpolation.
         interpolated_inputs = {}
@@ -130,6 +147,14 @@ def get_integrated_gradients(inputs, model, baseline=None, num_steps=50, squeeze
         inputs = inputs.astype(np.float32)
         if baseline is None:
             baseline = np.zeros(inputs.shape[1:]).astype(np.float32)
+        elif isinstance(baseline, list): #given input: list of random baselines
+            merged_ig = []
+            for random_bl in baseline: 
+                ig = get_integrated_gradients(inputs, model, baseline=random_bl, num_steps=num_steps, 
+                                              squeeze_chdim = squeeze_chdim, feat_keys = feat_keys)
+                merged_ig.append(ig)
+            merged_ig = np.mean(np.stack(merged_ig), axis=0)
+            return merged_ig
         else:
             baseline = baseline.astype(np.float32)
             
